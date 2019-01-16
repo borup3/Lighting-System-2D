@@ -1,0 +1,7 @@
+
+	Want to contribute to this lighting engine?
+	
+	Fork the repository, make your change(s) and submit a pull request.
+	All code additions must be clearly documented.
+	
+	All contributors will be listed here.
