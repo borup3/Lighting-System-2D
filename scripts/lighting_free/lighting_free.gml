@@ -3,11 +3,11 @@
 vertex_format_delete(global.lightVertexFormat);
 
 // Remove all lights, if any
-var lights = ds_list_size(global.worldLights);
-for(var i = 0; i < lights; ++i) {
+var lights = global.worldLights;
+for(var i = 0; i < ds_list_size(global.worldLights); ++i) {
 	light_destroy(lights[| i]);
 }
-ds_list_destroy(global.worldLights);
+ds_list_destroy(lights);
 
 ds_map_destroy(global.lightVertexArrayMap);
 
