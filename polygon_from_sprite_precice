@@ -1,0 +1,479 @@
+// Script assets have changed for v2.3.0 see
+// https://help.yoyogames.com/hc/en-us/articles/360005277377 for more information
+/// @desc Creates a polygon from an sprite precice
+/// @arg sprite to create a polygon from
+/// @arg subimage
+/// @arg mode
+/// @arg pointnumb
+/// @returns The polygon for the sprite
+function polygon_from_sprite_precice(argument0,argument1,argument2,argument3)
+{
+///polygon_from_sprite_precice(sprite, subImage, Mode <optional>, pointNumber<min 4 : max 360 : defaultMax> <optional>);
+/*
+    <=============== DESCRIPTION ===============>
+        CALL THIS FUNCTION FOR PRECISE MASK GENERATION
+        Adds a submesh to a mesh from a sprite, making a pixel accurate
+        mask arround the sprite, it uses the sprite offset as the starting
+        point, It uses transparent as the mesh edge.
+        
+        Script created by James222 for Jobos Lighting Engine.
+        Script created on: 22/07/21 DD/MM/YY
+        Script modified on: 24/07/21 DD/MM/YY by James222
+        
+        History:
+        V 1.0.0, 22/07/21 - initial version
+            - Added default implimentation allowing for a surface to be checked.
+        
+        V 1.0.1, 22/07/21 - optimization work
+            - Surface is converted to a fast buffer for exponential performance increase especially in YYC mode est performance increase 1000%
+            
+        v 1.0.2, 23/07/21 - further optimization work
+            - step amount for degrees amount was changed to a more logical argument of how many points should the end mesh contain
+            - improved performance by only accessing the alpha chanel as technichally we dont use color data, this allows us to only do one buffer lookup vs four, est performance increase 150%
+            - broke the scripts down into subscripts for Normal and GreedyExit Mode, this allows a faster process as the checks are not performed each loop, est performance increase 45%
+            - removed any unnecessary local variables in the scripts if possible, speed up by removing variables that could be ommitted
+            - replaced the Len_dir functions, we now calculate the angle outside the loop, this causes a massive speed up as Len_dir was calculating the same angle each loop, performance increase 35-50%
+            
+        v 1.0.3, 24/07/21 - added alternative mode
+            - added a whole new meshing system that works by casting rays from the outside border of the sprite, from top, right, bottom, left, so the point count should be (Wid+Hig+Wid+Hig).
+            - very optimized and especially on smaller sprites should be expedentialy faster
+        
+        Current Script ver 1.0.3;
+        
+        <=============== PERFORMANCE TESTS ===============>
+        <=============== YYC MODE GMS v1.4.9999) ===============>:
+        sprite used: spr_glr_player
+            <=============== GREEDYEXIT = FALSE ===============>
+            TEST 1:                                 TEST 2:
+            Microseconds: 2127;                     Microseconds: 1116;
+            Milliseconds: 2.13;                     Milliseconds: 1.12
+            Points: 360;                            Points: 180;    
+            
+            TEST 3:                                 TEST 4:
+            Microseconds: 493;                      Microseconds: 264;
+            Milliseconds: 0.49;                     Milliseconds: 0.26;
+            Points: 72                              Points: 32
+            
+    
+            <=============== GREEDYEXIT = TRUE ===============>
+            TEST 1:                                 TEST 2:
+            Microseconds: 1545;                     Microseconds: 794;
+            Milliseconds: 1.54;                     Milliseconds: 0.79;
+            Points: 360;                            Points: 180;
+ 
+            
+            TEST 3:                                 TEST 4:
+            Microseconds: 381;                      Microseconds: 218;
+            Milliseconds: 0.38;                     Milliseconds: 0.22;
+            Points: 72;                             Points: 32
+            
+            
+    <===============  ARGUMENTS  ===============>
+        sprite: the sprite to use.
+        subimage: the subimage of the sprite to use.
+       
+        Mode: 0: the script will expand each ray to all to the edges, terminating at the last 
+                 transparent pixel, ensuring the mask is precice.  
+              1: the script will terminate at the first instance of a transparent pixel.   
+              2: the script will use the ray from edges method AUTO MODE
+                        
+        pointNumber: the number of points that should be in this mesh, min: 4, max: 360: defaultMax
+    <===========================================>
+*/
+
+//STATS IF ARGUMENT SET
+var mode = 2;
+var pointnumb = 360;
+
+    mode = argument2
+    mode = min(mode,2)
+    mode = max(mode,0)
+
+    pointnumb = argument3;
+       
+    
+
+
+
+
+var ret1 = 0;
+if (mode == 1)
+{
+    ret1 = polygon_from_sprite_precice_greedy(argument0,argument1,pointnumb)
+}
+else if (mode == 0)
+{
+    ret1 = polygon_from_sprite_precice_normal(argument0,argument1,pointnumb)
+}
+else if (mode == 2)
+{
+    ret1 = polygon_from_sprite_precice_auto(argument0,argument1)
+}
+
+
+return ret1;
+
+//DONE
+
+
+
+}
+
+
+/// @desc Creates a polygon from an sprite precice Greedy
+/// @arg sprite to create a polygon from
+/// @arg subimage
+/// @arg pointnumb
+/// @returns The polygon for the sprite
+function polygon_from_sprite_precice_greedy(argument0,argument1,argument2)
+{
+	gml_pragma("forceinline");
+
+//SETUP
+var w = sprite_get_width(argument0);
+var h = sprite_get_height(argument0);
+var xo = sprite_get_xoffset(argument0);
+var yo = sprite_get_yoffset(argument0);
+
+//SURFACE CREATE
+var surf = surface_create(w, h);
+surface_set_target(surf);
+draw_clear_alpha(c_black, 0);
+draw_sprite(argument0,argument1,xo,yo);    
+surface_reset_target();
+//view_surface_id[0] = surf;
+
+
+//CONVERT TO BUFFER FASTER
+var buffImg = buffer_create(((w*h)<<2),buffer_fast,1);
+buffer_get_surface(buffImg,surf,0);
+
+//POINT EXPANSION
+var curangle = 0;
+var curlen = 0;
+
+argument2 = 360/argument2;
+var set = array_create(argument2);
+//LOCALS
+var Xadd = 0;
+var Yadd = 0;
+
+//BOUNDS CHECK
+argument2 = min(argument2,360)
+argument2 = max(argument2,1);
+
+//CREATE RAYS FROM ORIGIN
+var pointcount = 0;
+for (curangle = 0; curangle < 360; curangle+=argument2)
+{
+    var curlen = 0;
+    var x2lastvalid = -1;
+    var y2lastvalid = -1;   
+    
+    // precalculating is much faster outside the loop, lendir is technichally faster, but doing this allows us to not have to recalculate the angle every step      
+    var dcosAng = dcos(curangle);     
+    var dsinAng = -dsin(curangle);     
+    //TRANSPARENCY DETECTION LOOP
+    while(true)
+    {
+        ++curlen;
+        x2lastvalid=curlen * dcosAng// faster then lengthdir_x
+        y2lastvalid=curlen * dsinAng// faster then lengthdir_y     
+        
+        Xadd = floor(xo + x2lastvalid);
+        Yadd = floor(yo + y2lastvalid); 
+        
+        //CHECK IF IN BOUNDS ELSE TERMINATE THIS RAY
+        //X
+        if ((Xadd >= w || Xadd <= 0) | (Yadd >= h || Yadd <= 0))
+        {
+            break;
+        }    
+
+        var px = (Xadd+(Yadd*w))<<2;
+         px+=3
+        var alpha = buffer_peek(buffImg,px,buffer_u8) && 255;             
+        //IF TRANSPARENT PIXEL IS FOUND SET LAST VALID POSITION OF THIS RAY    
+        if (alpha == 0)
+        {
+            break;
+        }     
+    }
+    //IF WE ARE HERE WE ARE READY TO ADD THE POINT AND MOVE ONTO THE NEXT ONE
+	set[pointcount] = [x2lastvalid, y2lastvalid];
+    ++pointcount;
+}
+buffer_delete(buffImg);//DELETE BUFFER
+//DESTROY SURFACE
+surface_free(surf);
+
+//CREATE THE MESH FROM THE POINT LIST
+return polygon_create(set);	
+}
+
+/// @desc Creates a polygon from an sprite precice Normal
+/// @arg sprite to create a polygon from
+/// @arg subimage
+/// @arg pointnumb
+/// @returns The polygon for the sprite
+function polygon_from_sprite_precice_normal(argument0,argument1,argument2)
+{
+	gml_pragma("forceinline");
+
+//SETUP
+var w = sprite_get_width(argument0);
+var h = sprite_get_height(argument0);
+var xo = sprite_get_xoffset(argument0);
+var yo = sprite_get_yoffset(argument0);
+
+//SURFACE CREATE
+var surf = surface_create(w, h);
+surface_set_target(surf);
+draw_clear_alpha(c_black, 0);
+draw_sprite(argument0,argument1,xo,yo);    
+surface_reset_target();
+//view_surface_id[0] = surf;
+
+
+//CONVERT TO BUFFER FASTER
+var buffImg = buffer_create(((w*h)<<2),buffer_fast,1);
+buffer_get_surface(buffImg,surf,0);
+
+//POINT EXPANSION
+var curangle = 0;
+var curlen = 0;
+argument2 = 360/argument2;
+var set = array_create(argument2);
+//LOCALS
+var Xadd = 0;
+var Yadd = 0;
+var x2 = 0;
+var y2 = 0;
+
+//BOUNDS CHECK
+argument2 = min(argument2,360)
+argument2 = max(argument2,1);
+
+
+
+
+//CREATE RAYS FROM ORIGIN
+var pointcount = 0;
+for (curangle = 0; curangle < 360; curangle+=argument2)
+{
+    var curlen = 0;
+    var x2lastvalid = -1;  
+    var y2lastvalid = -1;    
+    
+    // precalculating is much faster outside the loop, lendir is technichally faster, but doing this allows us to not have to recalculate the angle every step 
+    var dcosAng = dcos(curangle);    
+    var dsinAng = -dsin(curangle);   
+    //TRANSPARENCY DETECTION LOOP
+    while(true)
+    {
+        ++curlen;
+        x2=curlen * dcosAng// faster then lengthdir_x
+        y2=curlen * dsinAng// faster then lengthdir_y  
+        
+        //CHECK IF IN BOUNDS ELSE TERMINATE THIS RAY
+        Xadd = floor(xo + x2);
+        Yadd = floor(yo + y2); 
+
+        //X Y
+        if ((Xadd >= w || Xadd <= 0) | (Yadd >= h || Yadd <= 0))
+        {
+            if (x2lastvalid == -1)
+                x2lastvalid = x2;
+                
+            if (y2lastvalid == -1)
+                y2lastvalid = y2;
+                
+            break;
+        }    
+        
+        var px = (Xadd+(Yadd*w))<<2;
+         px+=3
+        //Slightly faster then px+=3
+        var alpha = buffer_peek(buffImg,px,buffer_u8) && 255;     
+        if (alpha == 1)
+        {
+            x2lastvalid = x2 +x;
+            y2lastvalid = y2+y;    
+        }
+    }
+    //IF WE ARE HERE WE ARE READY TO ADD THE POINT AND MOVE ONTO THE NEXT ONE
+	set[pointcount] = [x2lastvalid, y2lastvalid];
+    ++pointcount;
+}
+buffer_delete(buffImg);//DELETE BUFFER
+//DESTROY SURFACE
+surface_free(surf);
+
+//CREATE THE MESH FROM THE POINT LIST
+return polygon_create(set);	
+//DONE	
+}
+
+function polygon_from_sprite_precice_auto(argument0,argument1)
+{
+gml_pragma("forceinline");
+
+//SETUP
+var w = sprite_get_width(argument0);
+var h = sprite_get_height(argument0);
+var xo = sprite_get_xoffset(argument0);
+var yo = sprite_get_yoffset(argument0);
+
+//SURFACE CREATE
+var surf = surface_create(w, h);
+surface_set_target(surf);
+draw_clear_alpha(c_black, 0);
+draw_sprite(argument0,argument1,xo,yo);    
+surface_reset_target();
+
+//CONVERT TO BUFFER FASTER
+var buffImg = buffer_create(((w*h)<<2),buffer_fast,1);
+buffer_get_surface(buffImg,surf,0)
+
+//POINT EXPANSION
+var curangleM = 0;
+var curlen = 0;
+ 
+
+//LOCALS
+var Xadd = 0;
+var Yadd = 0;
+var x2 = 0;
+var y2 = 0;
+var pointcount = 0;
+
+var set = array_create((w-1) + (h-1) + (w-1) + (h-1));
+
+//TOP
+for (xx = 0; xx < w-1; xx++)
+{
+    // precalculating is much faster outside the loop, lendir is technichally faster, but doing this allows us to not have to recalculate the angle every step 
+    var curangleM = point_direction(xx,0,xo,yo);
+    var curlen = 0//point_distance(xx,0,xo,yo);
+    var dcosAng = dcos(curangleM);    
+    var dsinAng = -dsin(curangleM); 
+    while(true)
+    {
+        ++curlen;
+        x2=curlen * dcosAng// faster then lengthdir_x
+        y2=curlen * dsinAng// faster then lengthdir_y  
+        
+        //CHECK IF IN BOUNDS ELSE TERMINATE THIS RAY
+        Xadd = floor(x2 + xx);
+        Yadd = floor(y2); 
+        
+        var px = (Xadd+(Yadd*w))<<2;
+         px+=3
+        var alpha = buffer_peek(buffImg,px,buffer_u8) && 255;     
+        if (alpha == 1)
+        {
+			set[pointcount] = [(x2 + xx)-xo+x,y2-yo+y];
+            ++pointcount;
+            break;   
+        }       
+    }    
+}
+
+//RIGHT
+for (yy = 0; yy < h-1; yy++)
+{
+    // precalculating is much faster outside the loop, lendir is technichally faster, but doing this allows us to not have to recalculate the angle every step 
+    var curangleM = point_direction(w,yy,xo,yo);
+    var curlen = 0//point_distance(w,yy,xo,yo);
+    var dcosAng = dcos(curangleM);    
+    var dsinAng = -dsin(curangleM); 
+    while(true)
+    {
+        ++curlen;
+        x2=curlen * dcosAng// faster then lengthdir_x
+        y2=curlen * dsinAng// faster then lengthdir_y    
+        
+        //CHECK IF IN BOUNDS ELSE TERMINATE THIS RAY
+        Xadd = floor(x2 + w);
+        Yadd = floor(y2 + yy); 
+        
+        var px = (Xadd+(Yadd*w))<<2;
+         px+=3
+        var alpha = buffer_peek(buffImg,px,buffer_u8) && 255;     
+        if (alpha == 1)
+        {
+			set[pointcount] = [(x2 + xx)-xo+x,y2-yo+y];
+            ++pointcount;
+            break;   
+        }        
+    }    
+}
+
+//BOT
+for (xx=w; xx>=1; xx--)
+{ 
+    // precalculating is much faster outside the loop, lendir is technichally faster, but doing this allows us to not have to recalculate the angle every step 
+    var curangleM = point_direction(xx,h,xo,yo);
+    var curlen = 0//point_distance(xx,h,xo,yo);
+    var dcosAng = dcos(curangleM);    
+    var dsinAng = -dsin(curangleM); 
+    while(true)
+    {
+        ++curlen;
+        x2=curlen * dcosAng// faster then lengthdir_x
+        y2=curlen * dsinAng// faster then lengthdir_y  
+        
+        //CHECK IF IN BOUNDS ELSE TERMINATE THIS RAY
+        Xadd = floor(x2+xx);
+        Yadd = floor(y2+h); 
+        
+        var px = (Xadd+(Yadd*w))<<2;
+        px+=3
+        var alpha = buffer_peek(buffImg,px,buffer_u8) && 255;     
+        if (alpha == 1)
+        {
+			set[pointcount] = [(x2 + xx)-xo+x,y2-yo+y];
+            ++pointcount;
+            break;   
+        }       
+    }    
+}
+
+//LEFT
+for (yy=h; yy>=1; yy--)
+{     
+    // precalculating is much faster outside the loop, lendir is technichally faster, but doing this allows us to not have to recalculate the angle every step 
+    var curangleM = point_direction(0,yy,xo,yo);
+    var curlen = 0//point_distance(0,yy,xo,yo);
+    var dcosAng = dcos(curangleM);    
+    var dsinAng = -dsin(curangleM); 
+    while(true)
+    {
+        ++curlen;
+        x2=curlen * dcosAng// faster then lengthdir_x
+        y2=curlen * dsinAng// faster then lengthdir_y  
+        
+        //CHECK IF IN BOUNDS ELSE TERMINATE THIS RAY
+        Xadd = floor(x2);
+        Yadd = floor(y2+yy); 
+        
+        var px = (Xadd+(Yadd*w))<<2;
+        px+=3
+        var alpha = buffer_peek(buffImg,px,buffer_u8) && 255;     
+        if (alpha == 1)
+        {
+			set[pointcount] = [(x2 + xx)-xo+x,y2-yo+y];
+            ++pointcount;
+            break;   
+        }     
+    }    
+}
+
+buffer_delete(buffImg);//DELETE BUFFER
+//DESTROY SURFACE
+surface_free(surf);
+
+
+//CREATE THE MESH FROM THE POINT LIST
+return polygon_create(set);		
+}
